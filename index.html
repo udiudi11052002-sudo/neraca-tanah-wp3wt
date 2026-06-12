@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enterprise WebGIS - Neraca Penatagunaan Tanah</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+
+    <style>
+        html, body, #map {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #0b0f19;
+        }
+        /* Custom Scrollbar untuk Sidebar */
+        .custom-scroll::-webkit-scrollbar { width: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); }
+        .custom-scroll::-webkit-scrollbar-thumb { background: rgba(16, 185, 129, 0.3); border-radius: 10px; }
+        .custom-scroll::-webkit-scrollbar-thumb:hover { background: rgba(16, 185, 129, 0.5); }
+        
+        .leaflet-draw-toolbar a { background-color: #1e293b !important; border-bottom: 1px solid #334155 !important; color: #f8fafc !important; }
+        .leaflet-draw-toolbar a:hover { background-color: #334155 !important; }
+
+        .custom-popup .leaflet-popup-content-wrapper {
+            background: #0f172a !important;
+            border: 1px solid #334155 !important;
+            border-radius: 0.75rem;
+            color: #f1f5f9 !important;
+            box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.5);
+        }
+        .custom-popup .leaflet-popup-tip { background: #0f172a !important; border: 1px solid #334155 !important; }
+        .custom-popup .leaflet-popup-close-button { color: #94a3b8 !important; padding: 8px !important; }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 font-sans antialiased">
+
+    <div id="loadingToast" class="fixed inset-0 z-[6000] bg-slate-950/80 backdrop-blur-md flex flex-col items-center justify-center gap-4" style="display: none;">
+        <div class="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+        <div class="text-sm font-semibold text-emerald-400 tracking-wide animate-pulse">Memproses Data Spasial...</div>
+    </div>
+
+    <div class="flex h-screen w-screen overflow-hidden relative">
+        
+        <aside id="sidebar" class="w-85 sm:w-96 bg-slate-900/95 backdrop-blur-xl border-r border-slate-800 flex flex-col z-[1000] transition-all duration-300 transform fixed inset-y-0 left-0 h-full shrink-0">
+            
+            <div class="p-5 border-b border-slate-800 flex items-center gap-4 bg-slate-950/40 relative group">
+                <div class="w-12 h-12 bg-emerald-600/10 flex items-center justify-center shrink-0 border border-emerald-500/30 rounded-xl relative">
+                    <img id="appLogo" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2310b981'><path d='M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5'/></svg>" class="w-8 h-8 object-contain rounded" alt="Logo">
+                    <label class="absolute inset-0 bg-slate-950/80 opacity-0 group-hover:opacity-100 transition rounded-xl flex items-center justify-center cursor-pointer text-[10px] font-bold text-emerald-400 border border-emerald-500/50" title="Ganti Logo Rapat">
+                        <i class="fa-solid fa-camera text-sm"></i>
+                        <input type="file" id="logoUploader" accept="image/*" class="hidden" onchange="changeAppLogo(event)">
+                    </label>
+                </div>
+                <div class="overflow-hidden">
+                    <h1 class="text-sm font-black text-emerald-400 uppercase tracking-wider truncate">Rapat Integrasi NPT</h1>
+                    <p class="text-xs text-slate-400 truncate mt-0.5">Kecamatan WP3WT</p>
+                </div>
+            </div>
+
+            <div class="p-4 border-b border-slate-800 bg-slate-900/50">
+                <div class="relative">
+                    <span class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-500">
+                        <i class="fa-solid fa-magnifying-glass text-xs"></i>
+                    </span>
+                    <input type="text" id="searchField" placeholder="Filter Jenis Penggunaan Lahan..." class="w-full pl-9 pr-4 py-2 bg-slate-950 text-slate-200 rounded-lg text-xs border border-slate-800 focus:outline-none focus:border-emerald-500 transition placeholder-slate-600">
+                </div>
+            </div>
+
+            <div class="p-4 border-b border-slate-800 bg-slate-950/20 space-y-3">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                        <i class="fa-solid fa-layer-group text-emerald-400"></i>
+                        <span>Lapisan Data</span>
+                    </h3>
+                    <label class="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold cursor-pointer transition flex items-center gap-1.5 shadow-md">
+                        <i class="fa-solid fa-file-import"></i> Panggil GeoJSON
+                        <input type="file" id="spatialInput" accept=".geojson,.json" class="hidden" onchange="handleLocalUpload(event)">
+                    </label>
+                </div>
+                <div id="layerNameDisplay" class="text-xs text-slate-300 font-medium truncate bg-slate-950/40 p-2 rounded border border-slate-800">
+                    <span class="text-slate-500 italic">Memuat basis data utama...</span>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 p-4 border-b border-slate-800 bg-slate-950/10 text-xs text-center">
+                <div class="bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/60">
+                    <div class="text-slate-500 mb-0.5">Jumlah Unsur</div>
+                    <div id="statClasses" class="text-base font-black text-emerald-400">0</div>
+                </div>
+                <div class="bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/60">
+                    <div class="text-slate-500 mb-0.5">Total Luas Aktif</div>
+                    <div id="statArea" class="text-base font-black text-emerald-400">0 Ha</div>
+                </div>
+            </div>
+
+            <div class="flex-1 overflow-y-auto p-4 custom-scroll space-y-3">
+                <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center justify-between border-b border-slate-800 pb-2">
+                    <span>Legenda Penggunaan Lahan</span>
+                    <i class="fa-solid fa-map-pin text-slate-600"></i>
+                </h3>
+                <div id="legendContainer" class="space-y-1.5 text-xs">
+                    <div class="text-xs text-slate-500 italic text-center p-2">Legenda otomatis terbentuk setelah data termuat.</div>
+                </div>
+            </div>
+
+            <div class="p-4 border-t border-slate-800 bg-slate-950/50 space-y-2">
+                <div class="flex items-center justify-between text-[11px] font-medium text-slate-400 px-1">
+                    <span>Transparansi Objek Peta</span>
+                    <span id="opacityVal" class="text-emerald-400 font-bold">75%</span>
+                </div>
+                <input type="range" id="opacitySlider" min="0" max="100" value="75" class="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500">
+            </div>
+        </aside>
+
+        <button id="sidebarToggle" class="fixed top-1/2 -translate-y-1/2 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-emerald-400 border-y border-r border-slate-800 w-6 h-16 rounded-r-xl z-[1001] flex items-center justify-center transition-all duration-300 shadow-2xl">
+            <i id="toggleIcon" class="fa-solid fa-angle-left text-xs"></i>
+        </button>
+
+        <main id="mapContainer" class="w-full h-full relative transition-all duration-300 pl-80 sm:pl-96">
+            <div id="map"></div>
+
+            <div class="absolute bottom-6 right-6 z-[1000] flex gap-2 bg-slate-900/95 backdrop-blur-md p-1.5 rounded-xl border border-slate-800 shadow-2xl">
+                <button onclick="changeBasemap('satelit')" id="btnSat" class="px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                    <i class="fa-solid fa-earth-asia"></i> Citra Satelit
+                </button>
+                <button onclick="changeBasemap('osm')" id="btnOsm" class="px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 bg-transparent text-slate-400 border border-transparent hover:bg-slate-800">
+                    <i class="fa-solid fa-map"></i> Peta Jalan
+                </button>
+            </div>
+
+            <div class="absolute top-6 right-6 z-[1000] flex flex-col gap-2">
+                <button onclick="map.zoomIn()" class="w-10 h-10 bg-slate-900/95 hover:bg-slate-800 text-slate-300 rounded-xl border border-slate-800 shadow-xl transition flex items-center justify-center font-bold text-lg">+</button>
+                <button onclick="map.zoomOut()" class="w-10 h-10 bg-slate-900/95 hover:bg-slate-800 text-slate-300 rounded-xl border border-slate-800 shadow-xl transition flex items-center justify-center font-bold text-lg">-</button>
+                <button onclick="triggerLocation()" class="w-10 h-10 bg-slate-900/95 hover:bg-slate-800 text-emerald-400 rounded-xl border border-slate-800 shadow-xl transition flex items-center justify-center text-sm" title="Fokus Lokasi Saya"><i class="fa-solid fa-crosshairs"></i></button>
+            </div>
+        </main>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+
+    <script>
+        // State Konfigurasi Global
+        let rawGeoJson = null;
+        let colorMap = {};
+        const modernPalette = ['#10b981', '#3b82f6', '#ef4444', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f43f5e', '#a855f7', '#06b6d4'];
+
+        // 1. INISIALISASI BASEMAP STANDAR (Bersih dari Peta Kustom/Bermasalah ATR/BPN)
+        const map = L.map('map', { center: [-0.603, 122.311], zoom: 9, zoomControl: false });
+        
+        const basemaps = {
+            satelit: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { 
+                attribution: 'Esri, Maxar, Earthstar Geographics' 
+            }),
+            osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { 
+                attribution: '© OpenStreetMap contributors' 
+            })
+        };
+        
+        let activeBasemap = 'satelit';
+        basemaps[activeBasemap].addTo(map);
+
+        let importedGroup = L.layerGroup().addTo(map);
+        let drawnItems = L.featureGroup().addTo(map);
+
+        // 2. LOGO MANAGER UI
+        function changeAppLogo(event) {
+            const file = event.target.files[0];
+            if (!file || !file.type.startsWith('image/')) return;
+            const reader = new FileReader();
+            reader.onload = e => document.getElementById('appLogo').src = e.target.result;
+            reader.readAsDataURL(file);
+        }
+
+        // 3. KALKULASI LUAS GEODETIK RIIL (Hektar)
+        function calculateRealAreaHa(feature) {
+            if (!feature.geometry || !['Polygon', 'MultiPolygon'].includes(feature.geometry.type)) return 0;
+            try {
+                const tempLayer = L.GeoJSON.geometryToLayer(feature.geometry);
+                if (typeof tempLayer.getLatLngs === 'function') {
+                    const latlngs = tempLayer.getLatLngs();
+                    const sqm = L.GeometryUtil.geodesicArea(feature.geometry.type === 'Polygon' ? latlngs[0] : latlngs.flatMap(l => l[0]));
+                    return sqm / 10000;
+                }
+            } catch (e) { return 0; }
+            return 0;
+        }
+
+        // 4. PARSER DATA GEOMETRI & ATRIBUT
+        function processSpatialData() {
+            if (!rawGeoJson || !rawGeoJson.features) return;
+
+            let classes = new Set();
+            let colorIdx = 0;
+            let totalArea = 0;
+
+            rawGeoJson.features.forEach(f => {
+                // Parsing Atribut Nama Penggunaan Lahan dari bermacam skema field desktop GIS
+                let name = f.properties.Qname50 || f.properties.Qname25 || f.properties.name || f.properties.NAME || f.properties.Keterangan || f.properties.REMARK || f.properties.Klasifikasi || "Belum Terklasifikasi";
+                f.properties._cleanName = name;
+                classes.add(name);
+
+                // Pertahankan warna jika ada format properti warna hex bawaan GIS
+                let nativeColor = f.properties.fillColor || f.properties.fill || f.properties.color || f.properties.COLOR;
+                if (!colorMap[name]) {
+                    if (nativeColor && nativeColor.startsWith('#')) {
+                        colorMap[name] = nativeColor;
+                    } else {
+                        colorMap[name] = modernPalette[colorIdx % modernPalette.length];
+                        colorIdx++;
+                    }
+                }
+
+                // Kalkulasi luas asli lapangan
+                f.properties._calculatedAreaHa = calculateRealAreaHa(f);
+                totalArea += f.properties._calculatedAreaHa;
+            });
+
+            document.getElementById('statClasses').innerText = rawGeoJson.features.length;
+            document.getElementById('statArea').innerText = totalArea > 0 ? totalArea.toFixed(2) + " Ha" : "0 Ha";
+
+            renderLayers();
+            buildLegend(classes);
+        }
+
+        // 5. RENDERING OVERLAY & KARTU INFORMASI POPUP (STANDAR BPN PGT 2019)
+        function renderLayers(filterKeyword = "") {
+            importedGroup.clearLayers();
+            if (!rawGeoJson || !rawGeoJson.features) return;
+
+            const op = parseFloat(document.getElementById('opacitySlider').value) / 100;
+            const kw = filterKeyword.toLowerCase();
+
+            const geoJsonLayer = L.geoJson(rawGeoJson, {
+                filter: f => !kw || f.properties._cleanName.toLowerCase().includes(kw),
+                style: f => ({
+                    color: "#ffffff",
+                    weight: 1,
+                    fillColor: colorMap[f.properties._cleanName] || '#475569',
+                    fillOpacity: op,
+                    opacity: 0.5
+                }),
+                pointToLayer: (f, latlng) => L.circleMarker(latlng, { radius: 6, fillColor: colorMap[f.properties._cleanName], color: "#fff", weight: 1, fillOpacity: 0.9 }),
+                onEachFeature: (f, layer) => {
+                    const qCode = f.properties.Qcode50 || f.properties.Qcode25 || f.properties.KODE || "-";
+                    const qName = f.properties._cleanName;
+                    
+                    const lereng = f.properties.Lereng || f.properties.BCODE || f.properties.Tingkat_Lrg || "0 - 2% (Datar)";
+                    const kemampuan = f.properties.K_Tanah || f.properties.Kelas_Kmp || "Kelas I (Sangat Tinggi)";
+                    const tekstur = f.properties.Tekstur || f.properties.X || "Sedang (Lempung)";
+                    const drainase = f.properties.Drainase || f.properties.D || "Baik (Teratur)";
+                    
+                    const penguasaan = f.properties.Oname2 || f.properties.Oname1 || f.properties.Status_Hak || "Tanah Negara / Belum Terdaftar";
+                    let areaDisplay = f.properties._calculatedAreaHa > 0 ? `${f.properties._calculatedAreaHa.toFixed(2)} Ha` : "Bukan Poligon";
+
+                    let popupHtml = `
+                        <div class="w-72 p-1 text-slate-200 font-sans">
+                            <div class="border-b border-slate-800 pb-2 mb-2 flex items-start justify-between gap-2">
+                                <div>
+                                    <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Kecamatan/WP3WT</h3>
+                                    <p class="text-sm font-black text-white mt-0.5">${qName}</p>
+                                </div>
+                                <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-mono font-bold px-1.5 py-0.5 rounded">${qCode}</span>
+                            </div>
+                            
+                            <div class="space-y-2.5 text-xs">
+                                <div class="bg-slate-950/40 p-2 rounded-lg border border-slate-800/80 flex items-center justify-between">
+                                    <div class="flex items-center gap-2 text-slate-400">
+                                        <i class="fa-solid fa-chart-area text-emerald-400 text-sm"></i>
+                                        <span>Luas Riil Lapangan</span>
+                                    </div>
+                                    <span class="text-emerald-400 font-black text-sm">${areaDisplay}</span>
+                                </div>
+
+                                <div class="bg-slate-950/40 p-2 rounded-lg border border-slate-800/80 space-y-2">
+                                    <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-800/50 pb-1 flex items-center gap-1.5">
+                                        <i class="fa-solid fa-mountain-sun"></i> Fisik & Kemampuan Tanah
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-x-2 gap-y-1.5 text-[11px]">
+                                        <div>
+                                            <span class="text-slate-500 block text-[10px]">Kemiringan Lereng</span>
+                                            <span class="text-slate-300 font-semibold">${lereng}</span>
+                                        </div>
+                                        <div>
+                                            <span class="text-slate-500 block text-[10px]">Kelas Kemampuan</span>
+                                            <span class="text-slate-300 font-semibold">${kemampuan}</span>
+                                        </div>
+                                        <div>
+                                            <span class="text-slate-500 block text-[10px]">Tekstur Tanah</span>
+                                            <span class="text-slate-300 font-semibold">${tekstur}</span>
+                                        </div>
+                                        <div>
+                                            <span class="text-slate-500 block text-[10px]">Kondisi Drainase</span>
+                                            <span class="text-slate-300 font-semibold">${drainase}</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="bg-slate-950/40 p-2 rounded-lg border border-slate-800/80 space-y-1">
+                                    <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                                        <i class="fa-solid fa-file-shield"></i> Aspek Penguasaan (GUPT)
+                                    </div>
+                                    <div class="text-slate-300 font-medium text-[11px] pl-4 relative">
+                                        <i class="fa-solid fa-signature absolute left-0 top-0.5 text-amber-500 text-[10px]"></i>
+                                        ${penguasaan}
+                                    </div>
+                                </div>
+
+                                <div class="max-h-20 overflow-y-auto custom-scroll border-t border-slate-800/60 pt-2 text-[10px] text-slate-500 space-y-0.5">
+                                    <div class="font-bold text-slate-400 mb-0.5">Atribut Tambahan Lainnya:</div>`;
+                                    for (let key in f.properties) {
+                                        if (!['_cleanName','_calculatedAreaHa','name','fill','fillColor','color','Qname50','Qname25','Qcode50','Qcode25','Lereng','BCODE','Tingkat_Lrg','K_Tanah','Kelas_Kmp','Tekstur','X','Drainase','D','Oname2','Oname1','Status_Hak'].includes(key) && typeof f.properties[key] !== 'object') {
+                                            popupHtml += `<div class="truncate"><b>${key}:</b> ${f.properties[key]}</div>`;
+                                        }
+                                    }
+                    popupHtml += `</div></div></div>`;
+
+                    layer.bindPopup(popupHtml, { maxWidth: 320, className: 'custom-popup' });
+                }
+            });
+
+            importedGroup.addLayer(geoJsonLayer);
+        }
+
+        // 6. BUAT PANEL LEGENDA
+        function buildLegend(set) {
+            const container = document.getElementById('legendContainer');
+            container.innerHTML = '';
+            if (set.size === 0) {
+                container.innerHTML = '<div class="text-xs text-slate-500 italic p-2 text-center">Belum ada legenda aktif.</div>';
+                return;
+            }
+            set.forEach(className => {
+                const row = document.createElement('div');
+                row.className = "flex items-center gap-3 p-2 rounded-lg bg-slate-950/40 border border-slate-800/80";
+                row.innerHTML = `<div class="w-4 h-4 rounded-md flex-shrink-0 border border-black/20" style="background-color: ${colorMap[className]}"></div><span class="truncate text-xs font-semibold text-slate-300">${className}</span>`;
+                container.appendChild(row);
+            });
+        }
+
+        // 7. INPUT HANDLER FILE GEOJSON LOCAL
+        function handleLocalUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            document.getElementById('loadingToast').style.display = 'flex';
+            document.getElementById('layerNameDisplay').innerHTML = `<span class="text-emerald-400 font-bold">${file.name}</span>`;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    rawGeoJson = JSON.parse(e.target.result);
+                    processSpatialData();
+                    
+                    if (importedGroup.getLayers().length > 0) {
+                        const bounds = L.featureGroup(importedGroup.getLayers()).getBounds();
+                        if (bounds.isValid()) map.fitBounds(bounds);
+                    }
+                } catch(err) {
+                    alert("Gagal membaca file. Pastikan file berformat GeoJSON (*.json/*.geojson) yang valid.");
+                } finally {
+                    document.getElementById('loadingToast').style.display = 'none';
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        // 8. SERVER LOADER PERMANEN OTOMATIS (Mendukung GitHub Pages)
+        async function loadPermanentData() {
+            try {
+                const response = await fetch('data_npt_wp3wt.geojson');
+                if (!response.ok) throw new Error("File repositori cloud belum siap.");
+                
+                rawGeoJson = await response.json();
+                document.getElementById('layerNameDisplay').innerHTML = `<span class="text-emerald-400 font-bold"><i class="fa-solid fa-cloud mr-1"></i> data_npt_wp3wt.geojson</span>`;
+                
+                processSpatialData();
+                
+                if (importedGroup.getLayers().length > 0) {
+                    const bounds = L.featureGroup(importedGroup.getLayers()).getBounds();
+                    if (bounds.isValid()) map.fitBounds(bounds);
+                }
+            } catch (error) {
+                document.getElementById('layerNameDisplay').innerHTML = `<span class="text-slate-500 italic">Siap menerima file unggahan manual</span>`;
+                console.log("Sistem Cloud Loader Khusus: " + error.message);
+            }
+        }
+
+        // 9. KONTROL BASEMAP INTERACTION SWITCHER
+        function changeBasemap(type) {
+            map.removeLayer(basemaps[activeBasemap]);
+            activeBasemap = type;
+            basemaps[activeBasemap].addTo(map);
+
+            document.getElementById('btnSat').className = type === 'satelit' 
+                ? "px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" 
+                : "px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 bg-transparent text-slate-400 border border-transparent hover:bg-slate-800";
+            
+            document.getElementById('btnOsm').className = type === 'osm' 
+                ? "px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" 
+                : "px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 bg-transparent text-slate-400 border border-transparent hover:bg-slate-800";
+        }
+
+        // 10. FITUR UI PENDUKUNG & DRAWING TOOLBAR MANUAL
+        document.getElementById('opacitySlider').addEventListener('input', e => {
+            document.getElementById('opacityVal').innerText = e.target.value + "%";
+            renderLayers();
+        });
+
+        document.getElementById('searchField').addEventListener('input', e => {
+            renderLayers(e.target.value);
+        });
+
+        function triggerLocation() { map.locate({setView: true, maxZoom: 16}); }
+        map.on('locationfound', e => { L.circle(e.latlng, e.accuracy).addTo(map); L.marker(e.latlng).addTo(map).bindPopup("Posisi Anda").openPopup(); });
+        map.on('locationerror', () => alert("Akses lokasi eksternal ditolak."));
+
+        const sidebar = document.getElementById('sidebar');
+        const mapContainer = document.getElementById('mapContainer');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        
+        sidebarToggle.addEventListener('click', () => {
+            sidebar.classList.toggle('-translate-x-full');
+            const isClosed = sidebar.classList.contains('-translate-x-full');
+            sidebarToggle.style.left = isClosed ? '0px' : sidebar.offsetWidth + 'px';
+            mapContainer.style.paddingLeft = isClosed ? '0px' : sidebar.offsetWidth + 'px';
+            document.getElementById('toggleIcon').className = isClosed ? 'fa-solid fa-angle-right text-xs' : 'fa-solid fa-angle-left text-xs';
+            setTimeout(() => map.invalidateSize({ animate: true }), 310);
+        });
+
+        // Geodesic Area Utility Setup
+        L.GeometryUtil = L.extend(L.GeometryUtil || {}, {
+            geodesicArea: function (latLngs) {
+                var pointsCount = latLngs.length, area = 0.0, d2r = Math.PI / 180, p1, p2;
+                if (pointsCount > 2) {
+                    for (var i = 0; i < pointsCount; i++) {
+                        p1 = latLngs[i]; p2 = latLngs[(i + 1) % pointsCount];
+                        area += ((p2.lng - p1.lng) * d2r) * (2 + Math.sin(p1.lat * d2r) + Math.sin(p2.lat * d2r));
+                    }
+                    area = area * 6378137.0 * 6378137.0 / 2.0;
+                }
+                return Math.abs(area);
+            }
+        });
+
+        // Toolbar Menggambar Objek Langsung Saat Jalannya Rapat Integrasi
+        const drawControl = new L.Control.Draw({
+            edit: { featureGroup: drawnItems },
+            draw: { polygon: true, polyline: true, rectangle: true, circle: false, circlemarker: false, marker: true }
+        });
+        map.addControl(drawControl);
+        map.on(L.Draw.Event.CREATED, e => {
+            var layer = e.layer;
+            drawnItems.addLayer(layer);
+            var info = "<b>Gambar Lapangan Manual (Rapat)</b>";
+            if (typeof layer.getLatLngs === 'function') {
+                var sqm = L.GeometryUtil.geodesicArea(layer.getLatLngs()[0]);
+                info += `<br><b>Luas Terukur:</b> ${(sqm / 10000).toFixed(2)} Ha`;
+            }
+            layer.bindPopup(info).openPopup();
+        });
+
+       // Fungsi otomatis memuat data spasial permanen dari server GitHub
+        async function loadPermanentData() {
+            document.getElementById('loadingToast').style.display = 'flex';
+            document.getElementById('layerNameDisplay').innerHTML = `<span class="text-slate-500 italic">Memuat basis data utama...</span>`;
+            
+            try {
+                // SESUAIKAN DI SINI: Nama file diganti menjadi Tekstur_Tanah.geojson
+                const response = await fetch('Tekstur_Tanah.geojson');
+                if (!response.ok) throw new Error("File repositori cloud belum siap.");
+                
+                rawGeoJson = await response.json();
+                document.getElementById('layerNameDisplay').innerHTML = `<span class="text-emerald-400 font-bold"><i class="fa-solid fa-cloud mr-1"></i> Tekstur_Tanah.geojson</span>`;
+                
+                processSpatialData();
+                
+                if (importedGroup.getLayers().length > 0) {
+                    const bounds = L.featureGroup(importedGroup.getLayers()).getBounds();
+                    if (bounds.isValid()) map.fitBounds(bounds);
+                }
+            } catch (error) {
+                document.getElementById('layerNameDisplay').innerHTML = `<span class="text-slate-500 italic">Siap menerima file unggahan manual</span>`;
+                console.log("Sistem Cloud Loader Khusus: " + error.message);
+            } finally {
+                document.getElementById('loadingToast').style.display = 'none';
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            sidebarToggle.style.left = sidebar.offsetWidth + 'px';
+            // Jalankan fungsi load otomatis saat halaman web dibuka
+            loadPermanentData(); 
+        });
+    </script>
+</body>
+</html>
